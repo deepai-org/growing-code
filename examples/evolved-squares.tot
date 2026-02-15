@@ -1,0 +1,9 @@
+mark 8
+mark 0
+inc 0
+mark 7
+add 0
+inc 0
+print 7
+up 3
+mark 0

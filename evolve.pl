@@ -1,9 +1,10 @@
 #!/usr/bin/perl
 # evolve.pl - the missing piece: evolve toten programs
 #
-# usage: perl evolve.pl [target] [generations] [--seed N] [--save file.tot]
+# usage: perl evolve.pl [target] [generations] [--seed N] [--save file.tot] [--stats file.csv]
 #   targets: count, squares, fib, primes, evens, odds, powers
 #   or just a number N for 1..N
+#   or a comma-separated sequence like "1,4,9,16,25"
 #   default: count 1000
 #
 # the fitness function rewards generalization: programs that produce
@@ -26,11 +27,12 @@ my %GENERATORS = (
 );
 
 # parse flags from anywhere in @ARGV
-my ($SEED, $SAVE);
+my ($SEED, $SAVE, $STATS);
 my @args;
 for(my $i=0; $i<@ARGV; $i++){
 	if($ARGV[$i] eq '--seed'){ $SEED = $ARGV[++$i] }
 	elsif($ARGV[$i] eq '--save'){ $SAVE = $ARGV[++$i] }
+	elsif($ARGV[$i] eq '--stats'){ $STATS = $ARGV[++$i] }
 	else { push @args, $ARGV[$i] }
 }
 
@@ -54,8 +56,14 @@ if($GENERATORS{$targ}){
 	@TARGET = (1..$targ);
 	@EXTENDED = (1..$targ+10);
 	$generator = sub { [1..$_[0]] };
+} elsif($targ =~ /^[\d,\s-]+$/ && $targ =~ /,/){
+	# custom comma-separated sequence: "1,4,9,16,25"
+	@TARGET = split /\s*,\s*/, $targ;
+	$TRAIN_LEN = scalar @TARGET;
+	# can't auto-extend a custom sequence, so just test what we have
+	@EXTENDED = @TARGET;
 } else {
-	die "unknown target '$targ'\ntargets: ".join(", ",sort keys %GENERATORS).", or a number N\n";
+	die "unknown target '$targ'\ntargets: ".join(", ",sort keys %GENERATORS).", a number N, or a comma-separated sequence\n";
 }
 
 my $POP = 150;
@@ -213,6 +221,13 @@ my $peak_gen = 0;
 my $first_fit;
 my $cur_mrate = $MRATE;
 
+# stats CSV
+my $stats_fh;
+if($STATS){
+	open $stats_fh, '>', $STATS or die "can't write $STATS: $!\n";
+	print $stats_fh "gen,best_fitness,avg_fitness,best_len,matched\n";
+}
+
 for my $gen (1..$GENS){
 	my @fit;
 	for my $g (@pop){
@@ -224,6 +239,16 @@ for my $gen (1..$GENS){
 	my $bi = 0;
 	for(1..$#fit){ $bi=$_ if $fit[$_]>$fit[$bi] }
 	$first_fit //= $fit[$bi];
+
+	# write stats row
+	if($stats_fh){
+		my $avg = 0; $avg += $_ for @fit; $avg /= @fit;
+		my @bi_ins = decode($pop[$bi]);
+		my @bi_out = run(\@bi_ins, scalar @EXTENDED + 20);
+		my $m = 0;
+		for my $i (0..$#EXTENDED){ $m++ if $i<@bi_out && $bi_out[$i]==$EXTENDED[$i] }
+		printf $stats_fh "%d,%.4f,%.4f,%d,%d\n", $gen, $fit[$bi], $avg, scalar @{$pop[$bi]}, $m;
+	}
 
 	if($fit[$bi] > $best_f){
 		$best_f = $fit[$bi];
@@ -255,7 +280,7 @@ for my $gen (1..$GENS){
 	}
 
 	# next gen
-	my @si = sort { $fit[$b] <=> $fit[$a] } 0..$#pop;
+	my @si = sort { ($fit[$b]//0) <=> ($fit[$a]//0) } 0..$#pop;
 	my @next;
 	push @next, [@{$pop[$si[$_]]}] for 0..$ELITE-1;
 	while(@next < $POP){
@@ -294,4 +319,9 @@ if($SAVE){
 	for(@ins){ print $fh "$_->[0] $_->[1]\n" }
 	close $fh;
 	print "saved to $SAVE\n";
+}
+
+if($stats_fh){
+	close $stats_fh;
+	print "stats saved to $STATS\n";
 }
