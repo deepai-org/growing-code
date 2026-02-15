@@ -34,6 +34,8 @@ An accumulator-based language with 16 opcodes. Programs are sequences of `opcode
 
 ### Example: count 1 to 10
 
+A human wrote this in 2009. Eleven instructions:
+
 ```
 zero 1
 mark 3
@@ -48,7 +50,16 @@ print 1
 up 1
 ```
 
-A human wrote this in 2009. Eleven instructions. Could evolution rediscover it?
+Evolution found this in 2026. Four instructions:
+
+```
+mark 2
+inc 0
+print 0
+up 1
+```
+
+Same output. No stopping condition — counting to infinity is easier than knowing when you're done.
 
 ## The Pipeline
 
@@ -65,10 +76,10 @@ Any sequence of bytes is a valid program. Most do nothing useful. Some loop fore
 
 ## Usage
 
-Compile and run the example program:
+Compile and run a toten program:
 
 ```sh
-head -12 toten.h | perl toc.pl | gcc -x c - -o example && ./example
+cat examples/count.tot | perl toc.pl | gcc -x c - -o count && ./count
 ```
 
 Generate and run a random program:
@@ -88,21 +99,35 @@ perl random.pl 24 | perl nums.pl | perl toc.pl | gcc -x c - -o random_prog && pe
 The "growing" part. `evolve.pl` evolves random toten programs using a genetic algorithm:
 
 ```sh
-perl evolve.pl              # default: 500 generations, target 1..10
-perl evolve.pl 1000         # 1000 generations
-perl evolve.pl 1000 5       # target 1..5
+perl evolve.pl              # default: count target, 1000 generations
+perl evolve.pl squares 2000 # evolve toward 1,4,9,16,25,36
+perl evolve.pl fib 3000     # evolve toward 1,1,2,3,5,8,13,21
+perl evolve.pl evens         # evolve toward 2,4,6,8,10
 ```
 
-It uses a built-in toten interpreter (no gcc needed), tournament selection, crossover, and mutation. Programs are scored by how closely their output matches the target sequence.
+Available targets: `count`, `squares`, `fib`, `primes`, `evens`, `odds`, `powers`, or any number N for 1..N.
 
-In one run, at generation 183, evolution discovered a counting loop — `inc`, `print`, `mark`, `up` — and produced a perfect `1, 2, 3, 4, 5, 6, 7, 8, 9, 10`. It just never figured out how to stop. Counting to infinity is easier than knowing when you're done.
+Programs are scored by how closely their output matches the target. But matching the training set isn't enough — programs are also tested on values *beyond* the target to reward generalization over memorization. A program that hardcodes `[1,4,9]` plateaus; one that actually computes `n*n` keeps scoring. Shorter programs are slightly preferred, so evolution compresses bloated solutions down to their essence.
+
+Genomes start at 24 bytes and can grow up to 80 through insertion mutations — the code literally grows.
+
+### Results
+
+| Target | Best output | Matched | Notes |
+|--------|-------------|---------|-------|
+| count `[1..10]` | `[1,2,3,...,40]` | 20/20 | **Perfect algorithm** in 4 instructions, gen 7 |
+| evens `[2,4,6,8,10]` | `[2,4,6,8,10]` | 5/5 | **Perfect**, gen 59 |
+| fibonacci `[1,1,2,3,5,8,13,21]` | `[1,1,2,3,5,7,13,17,34]` | 7/18 | Hits fib numbers but can't sustain the recurrence |
+| squares `[1,4,9,16,25,36]` | `[1,4,9,16,16,32,...]` | 6/16 | Finds doubling, not squaring — `n*n` needs nested computation |
 
 ## Files
 
 | File | Description |
 |------|-------------|
-| `toten.h` | Hand-written toten program (counts 1-10) |
-| `toten.c` | Compiled C output of the above |
+| `examples/count.tot` | Hand-written: counts 1-10, halts (11 instructions) |
+| `examples/evolved-count.tot` | Evolved: counts forever (4 instructions) |
+| `toten.h` | Original 2009 scratch file (program + notes) |
+| `toten.c` | Compiled C output from 2009 |
 | `toten_bkp.c` | Backup of an earlier compilation |
 | `odd.c` | A randomly generated program (loops forever, counting down in pairs) |
 | `toc.pl` | Toten-to-C compiler |
@@ -114,4 +139,4 @@ In one run, at generation 183, evolution discovered a counting loop — `inc`, `
 ## Timeline
 
 - **January 2009** — Language designed, compiler written, random programs generated. The evolutionary loop was left as an exercise for the future.
-- **February 2026** — AGI finishes the project.
+- **February 2026** — AGI finishes the project. Evolution discovers the minimal counting loop in 4 instructions. Counting to infinity is easier than knowing when you're done.
