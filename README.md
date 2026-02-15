@@ -92,51 +92,39 @@ Any sequence of bytes is a valid program. Most do nothing useful. Some loop fore
 
 ## Usage
 
-Run a toten program directly (no compiler needed):
+Everything goes through `toten.pl`:
 
 ```sh
-perl run.pl examples/count.tot
-perl run.pl examples/evolved-evens.tot 10000 20   # custom step limit and output limit
+perl toten.pl run examples/count.tot                # interpret a program
+perl toten.pl run examples/evolved-evens.tot 10000 20  # with step/output limits
+perl toten.pl compile examples/count.tot | gcc -x c - -o count && ./count  # compile to C
+perl toten.pl random 24                              # generate a random program
+perl toten.pl random 24 > rand.tot && perl toten.pl run rand.tot  # generate and run
+perl toten.pl evolve count 500 --seed 42 --save best.tot  # evolve, save, reproduce
 ```
 
-Or compile to C for maximum speed:
-
-```sh
-cat examples/count.tot | perl toc.pl | gcc -x c - -o count && ./count
-```
-
-Generate and run a random program:
-
-```sh
-perl random.pl 24 | perl nums.pl | perl toc.pl | gcc -x c - -o random_prog && ./random_prog
-```
-
-Note: random programs may loop forever. Use a timeout:
-
-```sh
-perl random.pl 24 | perl nums.pl | perl toc.pl | gcc -x c - -o random_prog && perl -e 'alarm 2; exec "./random_prog"'
-```
+The individual scripts (`run.pl`, `toc.pl`, `evolve.pl`, etc.) still work standalone for piping and backward compatibility.
 
 ## Evolution
 
-The "growing" part. `evolve.pl` evolves random toten programs using a genetic algorithm:
+The "growing" part. Evolve random toten programs toward a target sequence:
 
 ```sh
-perl evolve.pl              # default: count target, 1000 generations
-perl evolve.pl squares 2000 # evolve toward 1,4,9,16,25,36
-perl evolve.pl fib 3000     # evolve toward 1,1,2,3,5,8,13,21
-perl evolve.pl evens         # evolve toward 2,4,6,8,10
+perl toten.pl evolve                 # default: count target, 1000 generations
+perl toten.pl evolve squares 2000    # evolve toward 1,4,9,16,25,36
+perl toten.pl evolve fib 3000        # evolve toward 1,1,2,3,5,8,13,21
+perl toten.pl evolve evens           # evolve toward 2,4,6,8,10
 ```
 
 Save the best evolved program and reproduce a run:
 
 ```sh
-perl evolve.pl evens 500 --save evolved.tot   # export best as .tot file
-perl evolve.pl count 100 --seed 42            # reproducible run
-perl evolve.pl fib 2000 --seed 7 --save fib.tot  # both
+perl toten.pl evolve evens 500 --save evolved.tot   # export best as .tot file
+perl toten.pl evolve count 100 --seed 42            # reproducible run
+perl toten.pl evolve fib 2000 --seed 7 --save fib.tot  # both
 ```
 
-The saved `.tot` file works with both `run.pl` and the C pipeline — the full round trip.
+The saved `.tot` file works with both `run` and `compile` — the full round trip.
 
 Available targets: `count`, `squares`, `fib`, `primes`, `evens`, `odds`, `powers`, or any number N for 1..N.
 
@@ -159,6 +147,12 @@ When fitness stagnates for 50 generations, the mutation rate triples temporarily
 
 | File | Description |
 |------|-------------|
+| `toten.pl` | **Driver script** — unified CLI for run, compile, evolve, random |
+| `evolve.pl` | Genetic algorithm — evolves toten programs toward a target output |
+| `run.pl` | Standalone toten interpreter — runs `.tot` files directly, no compiler needed |
+| `toc.pl` | Toten-to-C compiler |
+| `nums.pl` | Random bytes to toten program converter |
+| `random.pl` | Random byte generator |
 | `examples/count.tot` | Hand-written: counts 1-10, halts (11 instructions) |
 | `examples/evolved-count.tot` | Evolved: counts forever (4 instructions) |
 | `examples/evolved-evens.tot` | Evolved: even numbers forever (7 instructions) |
@@ -166,12 +160,7 @@ When fitness stagnates for 50 generations, the mutation rate triples temporarily
 | `toten.c` | Compiled C output from 2009 |
 | `toten_bkp.c` | Backup of an earlier compilation |
 | `odd.c` | A randomly generated program (loops forever, counting down in pairs) |
-| `toc.pl` | Toten-to-C compiler |
-| `nums.pl` | Random bytes to toten program converter |
-| `random.pl` | Random byte generator |
-| `run.pl` | Standalone toten interpreter — runs `.tot` files directly, no compiler needed |
 | `rands.txt` | Sample output from running the count-to-10 program |
-| `evolve.pl` | Genetic algorithm — evolves toten programs toward a target output |
 
 ## Timeline
 
