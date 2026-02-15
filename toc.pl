@@ -1,4 +1,4 @@
-@varops= qw|if ifnot print add sub mul inc dex mod zero setv mark stop|;
+@varops= qw|if ifnot print add sub mul div inc dec mod zero setv mark stop|;
 
 $pre='#include <stdio.h>
 int main()
