@@ -73,8 +73,9 @@ examples:
   perl toten.pl run examples/count.tot
   perl toten.pl compile examples/count.tot | gcc -x c - -o count && ./count
   perl toten.pl evolve count 500 --seed 42 --save best.tot
-  perl toten.pl evolve "1,4,9,16,25" 500             # custom sequence
-  perl toten.pl evolve evens 500 --stats fitness.csv  # export stats
+  perl toten.pl evolve fib 1000 --islands 3           # island model
+  perl toten.pl evolve "1,4,9,16,25" 500              # custom sequence
+  perl toten.pl evolve evens 500 --stats fitness.csv   # export stats
   perl toten.pl minimize examples/evolved-evens.tot   # strip dead code
   perl toten.pl trace examples/count.tot              # see execution
   perl toten.pl random 30

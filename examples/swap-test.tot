@@ -1,0 +1,8 @@
+mark 1
+setc 5
+mark 2
+setc 3
+swap 1
+print 1
+print 2
+stop 0

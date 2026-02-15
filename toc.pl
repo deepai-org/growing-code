@@ -1,4 +1,4 @@
-@varops= qw|if ifnot print add sub mul div inc dec mod zero setv mark stop|;
+@varops= qw|if ifnot print add sub mul div inc dec mod zero setv mark swap stop|;
 
 $pre='#include <stdio.h>
 int main()
@@ -36,7 +36,7 @@ print $pre;
 for($i=0;$i<=$#varn;$i++){
 	print "int VAR_$vari{$varn[$i]}=0;\n";
 	}
-print "int* acc=&VAR_$vari{0};\n";
+print "int* acc=&VAR_$vari{0};\nint _swap_tmp=0;\n";
 
 for($i=0;$i<=$#op;$i++) {
 	#print "LINE_$i: $op[$i] $vari{$opand[$i]}\n";
@@ -56,6 +56,7 @@ for($i=0;$i<=$#op;$i++) {
 	if($op eq "mod") {print "*acc = (VAR_$vari{$opand}) ? *acc%VAR_$vari{$opand} : 0;"; goto EOL}
 	if($op eq "inc") {print "VAR_$vari{$opand}++;"; goto EOL}
 	if($op eq "dec") {print "VAR_$vari{$opand}--;"; goto EOL}
+	if($op eq "swap") {print "_swap_tmp=*acc; *acc=VAR_$vari{$opand}; VAR_$vari{$opand}=_swap_tmp;"; goto EOL}
 	if($op eq "print") {print 'printf("%d\n"'.",VAR_$vari{$opand});"; goto EOL}
 	if($op eq "if" or $op eq "ifnot") {
 		my $dline=$i+2;

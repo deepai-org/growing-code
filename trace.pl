@@ -69,6 +69,10 @@ while($pc >= 0 && $pc <= $#ins && $steps < $TSTEPS){
 	elsif($op eq 'mod')  { $v{$acc}=($v{$n}//0) ? ($v{$acc}//0)%$v{$n} : 0 }
 	elsif($op eq 'inc')  { $v{$n}=($v{$n}//0)+1 }
 	elsif($op eq 'dec')  { $v{$n}=($v{$n}//0)-1 }
+	elsif($op eq 'swap') {
+		my $tmp=$v{$acc}//0; $v{$acc}=$v{$n}//0; $v{$n}=$tmp;
+		$out_val = "v$acc<->v$n";
+	}
 	elsif($op eq 'print'){
 		my $val = $v{$n}//0;
 		push @out, $val;

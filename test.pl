@@ -172,6 +172,43 @@ print "\n--- tracer tests ---\n";
 }
 
 # ==========================================
+print "\n--- swap opcode tests ---\n";
+# ==========================================
+
+{
+	# swap-test.tot: mark 1, setc 5, mark 2, setc 3, swap 1 → v1=3, v2=5
+	my $out = run_cmd("perl '$dir/run.pl' '$dir/examples/swap-test.tot'");
+	my @vals = split /\n/, $out;
+	ok($vals[0] == 3 && $vals[1] == 5, "swap exchanges register values");
+}
+
+{
+	# trace shows swap annotation
+	my $out = run_cmd("perl '$dir/trace.pl' '$dir/examples/swap-test.tot'");
+	ok(scalar($out =~ /v2<->v1/), "tracer annotates swap operation");
+}
+
+# ==========================================
+print "\n--- auto-minimize tests ---\n";
+# ==========================================
+
+{
+	my $out = run_cmd("perl '$dir/evolve.pl' evens 300 --seed 42");
+	ok(scalar($out =~ /minimized from/), "auto-minimize reports reduction after evolution");
+}
+
+# ==========================================
+print "\n--- island model tests ---\n";
+# ==========================================
+
+{
+	my $out = run_cmd("perl '$dir/evolve.pl' count 100 --seed 42 --islands 3");
+	ok(scalar($out =~ /islands=3/), "island model shows island count in header");
+	ok(scalar($out =~ /\[\d\]/), "island model shows island index in progress");
+	ok(scalar($out =~ /PERFECT ALGORITHM/), "island model finds solution");
+}
+
+# ==========================================
 print "\n--- evolution tests ---\n";
 # ==========================================
 
@@ -227,6 +264,34 @@ print "\n--- evolution tests ---\n";
 		ok(scalar @vals > 0, "saved program runs and produces output");
 		unlink $sf;
 	}
+}
+
+# ==========================================
+print "\n--- compiler tests (all examples) ---\n";
+# ==========================================
+
+if($has_gcc){
+	my @examples = glob("$dir/examples/*.tot");
+	for my $ex (sort @examples){
+		my $name = $ex;
+		$name =~ s|.*/||;  # basename
+		# get interpreter output (limit to 20 values)
+		my $interp = run_cmd("perl '$dir/run.pl' '$ex' 10000 20");
+		# compile to C and build
+		my $bin = "/tmp/toten_test_" . $name;
+		$bin =~ s/\.tot$//;
+		system("perl '$dir/toten.pl' compile '$ex' | gcc -x c - -o '$bin' 2>/dev/null");
+		if(-f $bin){
+			# run compiled binary, limit output with head
+			my $compiled = run_cmd("'$bin' | head -20");
+			ok($compiled eq $interp, "compile $name matches interpreter");
+			unlink $bin;
+		} else {
+			ok(0, "compile $name matches interpreter (gcc failed)");
+		}
+	}
+} else {
+	print "  skip  (gcc not found — skipping compiler tests)\n";
 }
 
 # ==========================================

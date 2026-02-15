@@ -50,6 +50,7 @@ sub run_prog {
 		elsif($op eq 'mod')  { $v{$acc}=($v{$n}//0) ? ($v{$acc}//0)%$v{$n} : 0 }
 		elsif($op eq 'inc')  { $v{$n}=($v{$n}//0)+1 }
 		elsif($op eq 'dec')  { $v{$n}=($v{$n}//0)-1 }
+		elsif($op eq 'swap') { my $tmp=$v{$acc}//0; $v{$acc}=$v{$n}//0; $v{$n}=$tmp }
 		elsif($op eq 'print'){ push @out, ($v{$n}//0); return \@out if @out >= $MAXOUT }
 		elsif($op eq 'if')   { if(($v{$n}//0)==0){ $pc+=2; next } }
 		elsif($op eq 'ifnot'){ if(($v{$n}//0)!=0){ $pc+=2; next } }

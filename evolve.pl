@@ -13,6 +13,7 @@
 
 use strict;
 use warnings;
+use List::Util qw(min);
 
 # --- target generators ---
 # each returns N values of the sequence
@@ -27,14 +28,16 @@ my %GENERATORS = (
 );
 
 # parse flags from anywhere in @ARGV
-my ($SEED, $SAVE, $STATS);
+my ($SEED, $SAVE, $STATS, $ISLANDS);
 my @args;
 for(my $i=0; $i<@ARGV; $i++){
 	if($ARGV[$i] eq '--seed'){ $SEED = $ARGV[++$i] }
 	elsif($ARGV[$i] eq '--save'){ $SAVE = $ARGV[++$i] }
 	elsif($ARGV[$i] eq '--stats'){ $STATS = $ARGV[++$i] }
+	elsif($ARGV[$i] eq '--islands'){ $ISLANDS = $ARGV[++$i] }
 	else { push @args, $ARGV[$i] }
 }
+$ISLANDS //= 1;
 
 my $targ = $args[0] || 'count';
 my $GENS = $args[1] || 1000;
@@ -74,14 +77,14 @@ my $TSTEPS = 10000;
 my $INIT_GLEN = 24;
 my $MAX_GLEN = 80;
 
-my @OPS = qw(if ifnot up down print add sub mul inc dec mod zero setv setc mark stop);
+my @OPS = qw(if ifnot up down print add sub mul inc dec mod zero setv setc mark swap stop);
 
 # --- genome to instructions ---
 sub decode {
 	my @g = @{$_[0]};
 	my @out;
 	for(my $i=0; $i<$#g; $i+=2){
-		push @out, [$OPS[$g[$i] % 15], $g[$i+1] % 10];
+		push @out, [$OPS[$g[$i] % 16], $g[$i+1] % 10];
 	}
 	return @out;
 }
@@ -111,6 +114,7 @@ sub run {
 		elsif($op eq 'mod') { $v{$acc}=($v{$n}//0) ? ($v{$acc}//0)%$v{$n} : 0 }
 		elsif($op eq 'inc') { $v{$n}=($v{$n}//0)+1 }
 		elsif($op eq 'dec') { $v{$n}=($v{$n}//0)-1 }
+		elsif($op eq 'swap'){ my $tmp=$v{$acc}//0; $v{$acc}=$v{$n}//0; $v{$n}=$tmp }
 		elsif($op eq 'print'){ push @out, ($v{$n}//0); return @out if @out >= $max_out }
 		elsif($op eq 'if')  { if(($v{$n}//0)==0){ $pc+=2; next } }
 		elsif($op eq 'ifnot'){if(($v{$n}//0)!=0){ $pc+=2; next } }
@@ -200,8 +204,41 @@ sub tourney {
 	return $b;
 }
 
+sub minimize {
+	my @ins = @{$_[0]};
+	my $baseline = join(',', run(\@ins, scalar @EXTENDED + 20));
+	my $changed = 1;
+	while($changed){
+		$changed = 0;
+		my $i = 0;
+		while($i < @ins){
+			my @try = @ins;
+			splice @try, $i, 1;
+			my $out = join(',', run(\@try, scalar @EXTENDED + 20));
+			if($out eq $baseline){
+				@ins = @try;
+				$changed = 1;
+			} else {
+				$i++;
+			}
+		}
+	}
+	return @ins;
+}
+
 # --- main ---
-my @pop = map { rg() } 1..$POP;
+my $ISLE_POP = int($POP / $ISLANDS);
+my $MIGRATE = 25;  # migration interval in generations
+
+my @islands;
+for my $isle (0..$ISLANDS-1){
+	push @islands, {
+		pop        => [map { rg() } 1..$ISLE_POP],
+		stag_count => 0,
+		cur_mrate  => $MRATE,
+	};
+}
+
 my $best_f = -999;
 my $best_g;
 
@@ -210,94 +247,148 @@ my $ext_str = join(', ', @EXTENDED[$TRAIN_LEN..$#EXTENDED]);
 print "target:  [$target_str]\n";
 print "bonus:   [$ext_str]  (generalization test)\n";
 print "pop=$POP gens=$GENS";
+print "  islands=$ISLANDS" if $ISLANDS > 1;
 print "  seed=$SEED" if defined $SEED;
 print "\n\n";
 
-# stagnation tracking
-my $STAG_THRESH = 50;  # generations without improvement before boosting
-my $stag_count = 0;
+# global tracking
+my $STAG_THRESH = 50;
 my $stag_kicks = 0;
 my $peak_gen = 0;
 my $first_fit;
-my $cur_mrate = $MRATE;
 
 # stats CSV
 my $stats_fh;
 if($STATS){
 	open $stats_fh, '>', $STATS or die "can't write $STATS: $!\n";
-	print $stats_fh "gen,best_fitness,avg_fitness,best_len,matched\n";
+	if($ISLANDS > 1){
+		print $stats_fh "gen,island,best_fitness,avg_fitness,best_len,matched\n";
+	} else {
+		print $stats_fh "gen,best_fitness,avg_fitness,best_len,matched\n";
+	}
 }
 
 for my $gen (1..$GENS){
-	my @fit;
-	for my $g (@pop){
-		my @ins = decode($g);
-		my @out = run(\@ins, scalar @EXTENDED + 20);
-		push @fit, fitness(\@out, scalar @$g);
-	}
 
-	my $bi = 0;
-	for(1..$#fit){ $bi=$_ if $fit[$_]>$fit[$bi] }
-	$first_fit //= $fit[$bi];
-
-	# write stats row
-	if($stats_fh){
-		my $avg = 0; $avg += $_ for @fit; $avg /= @fit;
-		my @bi_ins = decode($pop[$bi]);
-		my @bi_out = run(\@bi_ins, scalar @EXTENDED + 20);
-		my $m = 0;
-		for my $i (0..$#EXTENDED){ $m++ if $i<@bi_out && $bi_out[$i]==$EXTENDED[$i] }
-		printf $stats_fh "%d,%.4f,%.4f,%d,%d\n", $gen, $fit[$bi], $avg, scalar @{$pop[$bi]}, $m;
-	}
-
-	if($fit[$bi] > $best_f){
-		$best_f = $fit[$bi];
-		$best_g = [@{$pop[$bi]}];
-		$peak_gen = $gen;
-		$stag_count = 0;
-		$cur_mrate = $MRATE;  # reset to normal on improvement
-		my @ins = decode($best_g);
-		my @out = run(\@ins, scalar @EXTENDED + 20);
-		my $os = @out ? join(",",@out) : "-";
-		my $nb = scalar @{$best_g};
-		my $matched = 0;
-		for my $i (0..$#EXTENDED){ $matched++ if $i<@out && $out[$i]==$EXTENDED[$i] }
-		printf "gen %4d  fit=%7.2f  len=%2db  match=%d/%d  out=[%s]\n",
-			$gen, $best_f, $nb, $matched, scalar @EXTENDED, $os;
-	}
-	else {
-		$stag_count++;
-		if($stag_count == $STAG_THRESH){
-			$cur_mrate = $MRATE * 3;
-			$stag_kicks++;
-			printf "gen %4d  ** stagnation kick #%d — mutation rate %.0f%% **\n",
-				$gen, $stag_kicks, $cur_mrate*100;
+	for my $isle_idx (0..$#islands){
+		my $isle = $islands[$isle_idx];
+		my @pop = @{$isle->{pop}};
+		my @fit;
+		for my $g (@pop){
+			my @ins = decode($g);
+			my @out = run(\@ins, scalar @EXTENDED + 20);
+			push @fit, fitness(\@out, scalar @$g);
 		}
-		if($gen % 100 == 0){
+
+		my $bi = 0;
+		for(1..$#fit){ $bi=$_ if $fit[$_]>$fit[$bi] }
+		$first_fit //= $fit[$bi];
+
+		# write stats row
+		if($stats_fh){
 			my $avg = 0; $avg += $_ for @fit; $avg /= @fit;
-			printf "gen %4d  best=%7.2f  avg=%6.2f\n", $gen, $best_f, $avg;
+			my @bi_ins = decode($pop[$bi]);
+			my @bi_out = run(\@bi_ins, scalar @EXTENDED + 20);
+			my $m = 0;
+			for my $i (0..$#EXTENDED){ $m++ if $i<@bi_out && $bi_out[$i]==$EXTENDED[$i] }
+			if($ISLANDS > 1){
+				printf $stats_fh "%d,%d,%.4f,%.4f,%d,%d\n", $gen, $isle_idx, $fit[$bi], $avg, scalar @{$pop[$bi]}, $m;
+			} else {
+				printf $stats_fh "%d,%.4f,%.4f,%d,%d\n", $gen, $fit[$bi], $avg, scalar @{$pop[$bi]}, $m;
+			}
 		}
+
+		# global best tracking
+		if($fit[$bi] > $best_f){
+			$best_f = $fit[$bi];
+			$best_g = [@{$pop[$bi]}];
+			$peak_gen = $gen;
+			$isle->{stag_count} = 0;
+			$isle->{cur_mrate} = $MRATE;
+			my @ins = decode($best_g);
+			my @out = run(\@ins, scalar @EXTENDED + 20);
+			my $os = @out ? join(",",@out) : "-";
+			my $nb = scalar @{$best_g};
+			my $matched = 0;
+			for my $i (0..$#EXTENDED){ $matched++ if $i<@out && $out[$i]==$EXTENDED[$i] }
+			if($ISLANDS > 1){
+				printf "gen %4d [%d]  fit=%7.2f  len=%2db  match=%d/%d  out=[%s]\n",
+					$gen, $isle_idx, $best_f, $nb, $matched, scalar @EXTENDED, $os;
+			} else {
+				printf "gen %4d  fit=%7.2f  len=%2db  match=%d/%d  out=[%s]\n",
+					$gen, $best_f, $nb, $matched, scalar @EXTENDED, $os;
+			}
+		}
+		else {
+			$isle->{stag_count}++;
+			if($isle->{stag_count} == $STAG_THRESH){
+				$isle->{cur_mrate} = $MRATE * 3;
+				$stag_kicks++;
+				if($ISLANDS > 1){
+					printf "gen %4d [%d]  ** stagnation kick #%d — mutation rate %.0f%% **\n",
+						$gen, $isle_idx, $stag_kicks, $isle->{cur_mrate}*100;
+				} else {
+					printf "gen %4d  ** stagnation kick #%d — mutation rate %.0f%% **\n",
+						$gen, $stag_kicks, $isle->{cur_mrate}*100;
+				}
+			}
+		}
+
+		# next gen for this island
+		my @si = sort { ($fit[$b]//0) <=> ($fit[$a]//0) } 0..$#pop;
+		my @next;
+		push @next, [@{$pop[$si[$_]]}] for 0..min($ELITE-1, $#pop);
+		while(@next < $ISLE_POP){
+			my $a = tourney(\@pop,\@fit);
+			my $b = tourney(\@pop,\@fit);
+			push @next, mutate(cross($pop[$a],$pop[$b]), $isle->{cur_mrate});
+		}
+		$isle->{pop} = \@next;
 	}
 
-	# next gen
-	my @si = sort { ($fit[$b]//0) <=> ($fit[$a]//0) } 0..$#pop;
-	my @next;
-	push @next, [@{$pop[$si[$_]]}] for 0..$ELITE-1;
-	while(@next < $POP){
-		my $a = tourney(\@pop,\@fit);
-		my $b = tourney(\@pop,\@fit);
-		push @next, mutate(cross($pop[$a],$pop[$b]), $cur_mrate);
+	# periodic progress (not per-island)
+	if($gen % 100 == 0){
+		printf "gen %4d  best=%7.2f\n", $gen, $best_f;
 	}
-	@pop = @next;
+
+	# migration: best from island i -> island (i+1) % N, replacing worst
+	if($ISLANDS > 1 && $gen % $MIGRATE == 0){
+		# cache fitness for each island's population
+		my @isle_fits;
+		for my $i (0..$#islands){
+			my @f;
+			for my $g (@{$islands[$i]{pop}}){
+				my @ins = decode($g);
+				my @out = run(\@ins, scalar @EXTENDED + 20);
+				push @f, fitness(\@out, scalar @$g);
+			}
+			push @isle_fits, \@f;
+		}
+		for my $i (0..$#islands){
+			my $dst_idx = ($i + 1) % $ISLANDS;
+			# best in source
+			my $sf = $isle_fits[$i];
+			my $sb = 0;
+			for(1..$#$sf){ $sb=$_ if $sf->[$_]>$sf->[$sb] }
+			# worst in destination
+			my $df = $isle_fits[$dst_idx];
+			my $dw = 0;
+			for(1..$#$df){ $dw=$_ if $df->[$_]<$df->[$dw] }
+			$islands[$dst_idx]{pop}[$dw] = [@{$islands[$i]{pop}[$sb]}];
+		}
+	}
 }
 
 # results
 print "\n" . "="x60 . "\n";
 my @ins = decode($best_g);
+my $raw_count = scalar @ins;
+@ins = minimize(\@ins);
 my @out = run(\@ins, scalar @EXTENDED + 20);
 my $matched = 0;
 for my $i (0..$#EXTENDED){ $matched++ if $i<@out && $out[$i]==$EXTENDED[$i] }
-print "best program (fitness $best_f, ".scalar(@ins)." instructions):\n\n";
+my $min_note = $raw_count > @ins ? " (minimized from $raw_count)" : "";
+print "best program (fitness $best_f, ".scalar(@ins)." instructions$min_note):\n\n";
 for(@ins){ print "  $_->[0] $_->[1]\n" }
 print "\noutput:   [" . join(", ",@out) . "]\n";
 print "expected: [" . join(", ",@EXTENDED) . "]\n";

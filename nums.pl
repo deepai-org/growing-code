@@ -1,4 +1,4 @@
-@ops= qw |if ifnot up down print add sub mul inc dec mod zero setv setc mark stop|;
+@ops= qw |if ifnot up down print add sub mul inc dec mod zero setv setc mark swap stop|;
 $m=10;
 while(<>){
 	if($FF){$FF=0}else{$FF=1}

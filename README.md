@@ -8,14 +8,14 @@ The generation pipeline was built. The evolution never was. Until now.
 
 ## The Toten Language
 
-An accumulator-based language with 16 opcodes. Programs are sequences of `opcode operand` pairs:
+An accumulator-based language with 17 opcodes. Programs are sequences of `opcode operand` pairs:
 
 | Opcode | Effect |
 |--------|--------|
 | `zero N` | Set variable N to 0 |
 | `setc N` | Set accumulator to constant N |
 | `setv N` | Set accumulator to variable N |
-| `mark N` | Point accumulator at variable N |
+| `mark N` | Point accumulator at variable N (also a jump target) |
 | `add N` | Accumulator += variable N |
 | `sub N` | Accumulator -= variable N |
 | `mul N` | Accumulator *= variable N |
@@ -23,6 +23,7 @@ An accumulator-based language with 16 opcodes. Programs are sequences of `opcode
 | `mod N` | Accumulator %= variable N |
 | `inc N` | Variable N++ |
 | `dec N` | Variable N-- |
+| `swap N` | Exchange accumulator value with variable N |
 | `print N` | Print variable N |
 | `if N` | If variable N == 0, skip next line |
 | `ifnot N` | If variable N != 0, skip next line |
@@ -101,61 +102,102 @@ perl toten.pl compile examples/count.tot | gcc -x c - -o count && ./count  # com
 perl toten.pl random 24                              # generate a random program
 perl toten.pl random 24 > rand.tot && perl toten.pl run rand.tot  # generate and run
 perl toten.pl evolve count 500 --seed 42 --save best.tot  # evolve, save, reproduce
+perl toten.pl evolve fib 1000 --islands 3            # island model (parallel pops)
+perl toten.pl evolve "1,4,9,16,25" 500               # custom target sequence
+perl toten.pl evolve evens 500 --stats fitness.csv   # export per-generation stats
+perl toten.pl minimize examples/evolved-evens.tot    # strip dead instructions
+perl toten.pl trace examples/count.tot               # step-by-step execution trace
 ```
 
 The individual scripts (`run.pl`, `toc.pl`, `evolve.pl`, etc.) still work standalone for piping and backward compatibility.
 
 ## Evolution
 
-The "growing" part. Evolve random toten programs toward a target sequence:
+The "growing" part. Two evolution engines with different strengths:
+
+### evolve.pl — the classic engine
+
+Byte-level genetic algorithm with crossover, tournament selection, and island model:
 
 ```sh
 perl toten.pl evolve                 # default: count target, 1000 generations
 perl toten.pl evolve squares 2000    # evolve toward 1,4,9,16,25,36
 perl toten.pl evolve fib 3000        # evolve toward 1,1,2,3,5,8,13,21
 perl toten.pl evolve evens           # evolve toward 2,4,6,8,10
+perl toten.pl evolve "1,4,9,16,25" 500  # custom comma-separated sequence
+perl toten.pl evolve fib 1000 --islands 3   # island model with migration
+perl toten.pl evolve count 100 --seed 42    # reproducible run
+perl toten.pl evolve evens 500 --save evolved.tot --stats fitness.csv
 ```
 
-Save the best evolved program and reproduce a run:
+Features: island model with periodic migration, auto-minimization of results, `--stats` CSV export, custom target sequences. Programs are scored by matching the target AND values *beyond* the training set — generalization over memorization.
+
+### grow_v2.pl — semantic mutation engine
+
+A redesigned evolution engine that addresses the "fibonacci cliff" — the deceptive fitness landscape where hard targets stall:
 
 ```sh
-perl toten.pl evolve evens 500 --save evolved.tot   # export best as .tot file
-perl toten.pl evolve count 100 --seed 42            # reproducible run
-perl toten.pl evolve fib 2000 --seed 7 --save fib.tot  # both
+perl grow_v2.pl fib 2000             # fibonacci (solved!)
+perl grow_v2.pl squares 2000         # perfect squares (solved!)
+perl grow_v2.pl primes 2000          # primes (partial — nested loops are hard)
 ```
 
-The saved `.tot` file works with both `run` and `compile` — the full round trip.
-
-Available targets: `count`, `squares`, `fib`, `primes`, `evens`, `odds`, `powers`, or any number N for 1..N.
-
-Programs are scored by how closely their output matches the target. But matching the training set isn't enough — programs are also tested on values *beyond* the target to reward generalization over memorization. A program that hardcodes `[1,4,9]` plateaus; one that actually computes `n*n` keeps scoring. Shorter programs are slightly preferred, so evolution compresses bloated solutions down to their essence.
-
-Genomes start at 24 bytes and can grow up to 80 through insertion mutations — the code literally grows.
-
-When fitness stagnates for 50 generations, the mutation rate triples temporarily to escape local optima, then resets when improvement resumes.
+Key differences from the classic engine:
+- **Semantic mutation**: operand-only, opcode-only, instruction swap, and block duplication mutations that make smaller, more meaningful changes
+- **Weighted opcode distribution**: `mark`, `inc`, `add`, `print`, `up` appear more often than exotic ops
+- **Relative error fitness**: near-misses on large numbers score better than in absolute scoring (outputting 140 when target is 144 scores well, not poorly)
+- **Streak bonus**: exponential reward for consecutive correct prefix values creates a gradient toward building the right algorithm incrementally
+- **Extinction events**: when stagnant, wipe 95% of the population but preserve elites, injecting fresh genetic material
+- **Direct jump targeting**: `up N` searches for `mark N` by matching operand, making loops easier to discover
+- **No crossover**: pure asexual reproduction — mutations alone drive the search
 
 ### Results
 
-| Target | Best output | Matched | Notes |
-|--------|-------------|---------|-------|
-| count `[1..10]` | `[1,2,3,...,40]` | 20/20 | **Perfect algorithm** in 4 instructions, gen 7 |
-| evens `[2,4,6,8,10]` | `[2,4,6,...,70]` | 15/15 | **Perfect algorithm** in 7 instructions, gen 129 |
-| fibonacci `[1,1,2,3,5,8,13,21]` | `[1,1,2,3,5,7,13,17,34]` | 7/18 | Hits fib numbers but can't sustain the recurrence |
-| squares `[1,4,9,16,25,36]` | `[1,4,9,16,16,32,...]` | 6/16 | Finds doubling, not squaring — `n*n` needs nested computation |
+| Target | evolve.pl | grow_v2.pl |
+|--------|-----------|------------|
+| count `[1..10]` | **Perfect** gen 7, 4 instructions | **Perfect** gen 12 |
+| evens `[2,4,6,8,10]` | **Perfect** gen 129, 7 instructions | — |
+| odds `[1,3,5,7,9]` | **Perfect** gen 124 (3 islands), 5 instructions | — |
+| powers `[1,2,4,8,16]` | **Perfect** ~gen 100, 8 instructions | **Perfect** gen 412 |
+| squares `[1,4,9,16,25]` | 5/16 partial | **Perfect** gen 37 |
+| fibonacci `[1,1,2,3,5,8,13]` | 11/18 partial (5 islands + swap) | **Perfect** gen 207 |
+| primes `[2,3,5,7,11]` | 2/16 partial | 5/14 partial |
 
-## Files
+The classic engine excels at targets with simple loop structures. The semantic engine cracks harder targets like fibonacci and squares that require multi-register coordination. Primes remains unsolved — it needs nested loops (trial division) which neither engine has discovered.
+
+## Tools
 
 | File | Description |
 |------|-------------|
-| `toten.pl` | **Driver script** — unified CLI for run, compile, evolve, random |
-| `evolve.pl` | Genetic algorithm — evolves toten programs toward a target output |
-| `run.pl` | Standalone toten interpreter — runs `.tot` files directly, no compiler needed |
-| `toc.pl` | Toten-to-C compiler |
+| `toten.pl` | **Driver script** — unified CLI for all tools below |
+| `evolve.pl` | Classic genetic algorithm — crossover, tournament selection, island model |
+| `grow_v2.pl` | Semantic mutation engine — relative fitness, streak bonus, extinction events |
+| `run.pl` | Standalone toten interpreter — runs `.tot` files directly |
+| `toc.pl` | Toten-to-C compiler (goto-based control flow) |
+| `minimize.pl` | Dead code eliminator — iteratively strips instructions that don't affect output |
+| `trace.pl` | Execution tracer — step-by-step display of PC, variables, accumulator |
+| `test.pl` | Test suite — 50 tests covering interpreter, compiler, evolution, and tools |
 | `nums.pl` | Random bytes to toten program converter |
 | `random.pl` | Random byte generator |
+
+## Examples
+
+| File | Description |
+|------|-------------|
 | `examples/count.tot` | Hand-written: counts 1-10, halts (11 instructions) |
 | `examples/evolved-count.tot` | Evolved: counts forever (4 instructions) |
 | `examples/evolved-evens.tot` | Evolved: even numbers forever (7 instructions) |
+| `examples/evolved-odds.tot` | Evolved: odd numbers |
+| `examples/evolved-squares.tot` | Evolved: perfect squares via sum-of-odds (10 instructions) |
+| `examples/evolved-fib.tot` | Evolved: partial fibonacci (40 instructions, memorized) |
+| `examples/evolved-primes.tot` | Evolved: partial primes (40 instructions, memorized) |
+| `examples/evolved-powers.tot` | Evolved: powers of 2 (8 instructions) |
+| `examples/swap-test.tot` | Test program for the swap opcode |
+
+## Archaeology
+
+| File | Description |
+|------|-------------|
 | `toten.h` | Original 2009 scratch file (program + notes) |
 | `toten.c` | Compiled C output from 2009 |
 | `toten_bkp.c` | Backup of an earlier compilation |
@@ -166,3 +208,5 @@ When fitness stagnates for 50 generations, the mutation rate triples temporarily
 
 - **January 2009** — Language designed, compiler written, random programs generated. The evolutionary loop was left as an exercise for the future.
 - **February 2026** — AGI finishes the project. Evolution discovers the minimal counting loop in 4 instructions. Counting to infinity is easier than knowing when you're done.
+- **February 2026** — Swap opcode, island model, auto-minimizer, execution tracer, test suite. The classic engine solves count, evens, odds, powers.
+- **February 2026** — Semantic mutation engine (grow_v2.pl). Fibonacci and squares fall. Primes holds out — nested loops remain the final frontier.

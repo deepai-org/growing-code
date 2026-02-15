@@ -51,6 +51,7 @@ while($pc >= 0 && $pc <= $#ins && $steps < $TSTEPS){
 	elsif($op eq 'mod')  { $v{$acc}=($v{$n}//0) ? ($v{$acc}//0)%$v{$n} : 0 }
 	elsif($op eq 'inc')  { $v{$n}=($v{$n}//0)+1 }
 	elsif($op eq 'dec')  { $v{$n}=($v{$n}//0)-1 }
+	elsif($op eq 'swap') { my $tmp=$v{$acc}//0; $v{$acc}=$v{$n}//0; $v{$n}=$tmp }
 	elsif($op eq 'print'){ print(($v{$n}//0)."\n"); $printed++; last if $printed >= $MAXOUT }
 	elsif($op eq 'if')   { if(($v{$n}//0)==0){ $pc+=2; next } }
 	elsif($op eq 'ifnot'){ if(($v{$n}//0)!=0){ $pc+=2; next } }
