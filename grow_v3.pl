@@ -315,6 +315,52 @@ sub inject_fragment {
 }
 
 # ============================================================
+# HOMOLOGOUS CROSSOVER
+# ============================================================
+# Structure-preserving crossover: align parents by shared mark
+# instructions (functional boundaries), swap code between them.
+# This lets a "loop body" from Parent A splice into the "control
+# flow" of Parent B without destroying the logic inside either.
+sub homologous_cross {
+	my ($a, $b) = @_;
+
+	# find mark positions in each parent (operand => first position)
+	my (%ma, %mb);
+	for my $i (0..$#$a) { $ma{$a->[$i][1]} //= $i if $a->[$i][0] eq 'mark' }
+	for my $i (0..$#$b) { $mb{$b->[$i][1]} //= $i if $b->[$i][0] eq 'mark' }
+
+	# find shared mark operands
+	my @shared = grep { exists $ma{$_} && exists $mb{$_} } 0..9;
+
+	if (@shared) {
+		# pick a shared mark to cross at
+		my $mark_val = $shared[int(rand(@shared))];
+		my $pos_a = $ma{$mark_val};
+		my $pos_b = $mb{$mark_val};
+
+		# prefix from A (up to mark), suffix from B (from mark onward)
+		my @child = (
+			(map { [$_->[0], $_->[1]] } @{$a}[0 .. $pos_a-1]),
+			(map { [$_->[0], $_->[1]] } @{$b}[$pos_b .. $#$b]),
+		);
+		splice @child, $MAX_LEN if @child > $MAX_LEN;
+		return \@child if @child >= 2;
+	}
+
+	# fallback: simple one-point crossover
+	my $pa = int(rand(max(1, scalar @$a)));
+	my $pb = int(rand(max(1, scalar @$b)));
+	my @child = (
+		(map { [$_->[0], $_->[1]] } @{$a}[0 .. $pa]),
+		(map { [$_->[0], $_->[1]] } @{$b}[$pb .. $#$b]),
+	);
+	splice @child, $MAX_LEN if @child > $MAX_LEN;
+	return @child >= 2 ? \@child : [map { [$_->[0],$_->[1]] } @$a];
+}
+
+my $CROSSOVER_RATE = 0.30;
+
+# ============================================================
 # CURRICULUM FITNESS FUNCTIONS
 # ============================================================
 
@@ -340,21 +386,34 @@ sub structure_fitness {
 	return $score;
 }
 
-# Stage 3 (primes only): produce increasing values that skip some integers
-sub skipping_fitness {
+# Stage: "Modulo Gym" — force discovery of mod against VARIABLES
+# Rewards sequences where x[n] is NOT divisible by x[n-1].
+# This teaches the building block for trial division: checking
+# divisibility against a changing value, not a constant.
+sub modulo_gym_fitness {
 	my @out = @{$_[0]};
 	return 0 if @out < 3;
+
 	my $score = scalar(@out) * 3;
-	my ($inc_count, $skip_count) = (0, 0);
+	my ($inc_count, $nondiv_count) = (0, 0);
+
 	for (1..$#out) {
-		if ($out[$_] > $out[$_-1]) {
+		# reward increasing positive values
+		if ($out[$_] > $out[$_-1] && $out[$_] > 0) {
 			$score += 8;
 			$inc_count++;
-			$skip_count++ if $out[$_] > $out[$_-1] + 1;
+		}
+		# heavy reward: current value NOT divisible by previous
+		if ($out[$_-1] > 1 && $out[$_] > 1) {
+			if ($out[$_] % $out[$_-1] != 0) {
+				$score += 20;
+				$nondiv_count++;
+			}
 		}
 	}
-	$score += 20 if $inc_count == $#out;  # fully increasing bonus
-	$score += $skip_count * 20;           # heavy reward for skipping
+
+	$score += 20 if $inc_count == $#out;       # fully increasing bonus
+	$score += $nondiv_count * 5 if $nondiv_count > 3;  # sustained non-divisibility
 	return $score;
 }
 
@@ -418,10 +477,9 @@ my %STAGES = (
 		{ name => 'target',    fn => \&target_fitness },
 	],
 	primes  => [
-		{ name => 'viability', fn => \&viability_fitness, gens => 100 },
-		{ name => 'structure', fn => \&structure_fitness, gens => 150 },
-		{ name => 'skipping',  fn => \&skipping_fitness,  gens => 200 },
-		{ name => 'target',    fn => \&target_fitness },
+		{ name => 'viability',   fn => \&viability_fitness,   gens => 100 },
+		{ name => 'modulo gym',  fn => \&modulo_gym_fitness,  gens => 300 },
+		{ name => 'target',      fn => \&target_fitness },
 	],
 );
 
@@ -549,12 +607,21 @@ for my $stage_idx (0..$#stages) {
 			}
 		}
 
-		# selection & reproduction
+		# selection & reproduction (with homologous crossover)
 		my @next;
 		push @next, $scored[$_]{genome} for 0..$ELITE_SIZE-1;
+		my $top = min(50, scalar @scored);
 		while (@next < $POP_SIZE) {
-			my $parent = $scored[int(rand(min(50, scalar @scored)))]{genome};
-			push @next, mutate($parent);
+			if (rand() < $CROSSOVER_RATE) {
+				# homologous crossover + mutation
+				my $p1 = $scored[int(rand($top))]{genome};
+				my $p2 = $scored[int(rand($top))]{genome};
+				push @next, mutate(homologous_cross($p1, $p2));
+			} else {
+				# asexual reproduction + mutation
+				my $parent = $scored[int(rand($top))]{genome};
+				push @next, mutate($parent);
+			}
 		}
 		@pop = @next;
 	}
