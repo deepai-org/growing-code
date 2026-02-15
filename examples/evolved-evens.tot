@@ -1,0 +1,7 @@
+setc 1
+mark 7
+inc 0
+print 0
+inc 0
+up 1
+mod 0

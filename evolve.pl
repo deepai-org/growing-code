@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 # evolve.pl - the missing piece: evolve toten programs
 #
-# usage: perl evolve.pl [target] [generations]
+# usage: perl evolve.pl [target] [generations] [--seed N] [--save file.tot]
 #   targets: count, squares, fib, primes, evens, odds, powers
 #   or just a number N for 1..N
 #   default: count 1000
@@ -25,8 +25,19 @@ my %GENERATORS = (
 	powers => sub { my $n=shift; [map {2**$_} 0..$n-1] },
 );
 
-my $targ = $ARGV[0] || 'count';
-my $GENS = $ARGV[1] || 1000;
+# parse flags from anywhere in @ARGV
+my ($SEED, $SAVE);
+my @args;
+for(my $i=0; $i<@ARGV; $i++){
+	if($ARGV[$i] eq '--seed'){ $SEED = $ARGV[++$i] }
+	elsif($ARGV[$i] eq '--save'){ $SAVE = $ARGV[++$i] }
+	else { push @args, $ARGV[$i] }
+}
+
+my $targ = $args[0] || 'count';
+my $GENS = $args[1] || 1000;
+
+srand($SEED) if defined $SEED;
 
 my $generator;
 my @TARGET;
@@ -56,8 +67,6 @@ my $INIT_GLEN = 24;
 my $MAX_GLEN = 80;
 
 my @OPS = qw(if ifnot up down print add sub mul inc dec mod zero setv setc mark stop);
-
-srand();
 
 # --- genome to instructions ---
 sub decode {
@@ -152,8 +161,10 @@ sub fitness {
 sub rg { [map { int rand 256 } 1..$INIT_GLEN] }
 
 sub mutate {
-	my @g = @{$_[0]};
-	for(@g){ $_ = int rand 256 if rand() < $MRATE }
+	my ($genome, $rate) = @_;
+	$rate //= $MRATE;
+	my @g = @$genome;
+	for(@g){ $_ = int rand 256 if rand() < $rate }
 	if(rand() < $GROW && @g < $MAX_GLEN){
 		my $pos = 2 * int(rand(@g/2 + 1));
 		splice @g, $pos, 0, int(rand(256)), int(rand(256));
@@ -190,7 +201,17 @@ my $target_str = join(', ',@TARGET);
 my $ext_str = join(', ', @EXTENDED[$TRAIN_LEN..$#EXTENDED]);
 print "target:  [$target_str]\n";
 print "bonus:   [$ext_str]  (generalization test)\n";
-print "pop=$POP gens=$GENS\n\n";
+print "pop=$POP gens=$GENS";
+print "  seed=$SEED" if defined $SEED;
+print "\n\n";
+
+# stagnation tracking
+my $STAG_THRESH = 50;  # generations without improvement before boosting
+my $stag_count = 0;
+my $stag_kicks = 0;
+my $peak_gen = 0;
+my $first_fit;
+my $cur_mrate = $MRATE;
 
 for my $gen (1..$GENS){
 	my @fit;
@@ -202,22 +223,35 @@ for my $gen (1..$GENS){
 
 	my $bi = 0;
 	for(1..$#fit){ $bi=$_ if $fit[$_]>$fit[$bi] }
+	$first_fit //= $fit[$bi];
+
 	if($fit[$bi] > $best_f){
 		$best_f = $fit[$bi];
 		$best_g = [@{$pop[$bi]}];
+		$peak_gen = $gen;
+		$stag_count = 0;
+		$cur_mrate = $MRATE;  # reset to normal on improvement
 		my @ins = decode($best_g);
 		my @out = run(\@ins, scalar @EXTENDED + 20);
 		my $os = @out ? join(",",@out) : "-";
 		my $nb = scalar @{$best_g};
-		# count how many match the extended sequence
 		my $matched = 0;
 		for my $i (0..$#EXTENDED){ $matched++ if $i<@out && $out[$i]==$EXTENDED[$i] }
 		printf "gen %4d  fit=%7.2f  len=%2db  match=%d/%d  out=[%s]\n",
 			$gen, $best_f, $nb, $matched, scalar @EXTENDED, $os;
 	}
-	elsif($gen % 100 == 0){
-		my $avg = 0; $avg += $_ for @fit; $avg /= @fit;
-		printf "gen %4d  best=%7.2f  avg=%6.2f\n", $gen, $best_f, $avg;
+	else {
+		$stag_count++;
+		if($stag_count == $STAG_THRESH){
+			$cur_mrate = $MRATE * 3;
+			$stag_kicks++;
+			printf "gen %4d  ** stagnation kick #%d — mutation rate %.0f%% **\n",
+				$gen, $stag_kicks, $cur_mrate*100;
+		}
+		if($gen % 100 == 0){
+			my $avg = 0; $avg += $_ for @fit; $avg /= @fit;
+			printf "gen %4d  best=%7.2f  avg=%6.2f\n", $gen, $best_f, $avg;
+		}
 	}
 
 	# next gen
@@ -227,7 +261,7 @@ for my $gen (1..$GENS){
 	while(@next < $POP){
 		my $a = tourney(\@pop,\@fit);
 		my $b = tourney(\@pop,\@fit);
-		push @next, mutate(cross($pop[$a],$pop[$b]));
+		push @next, mutate(cross($pop[$a],$pop[$b]), $cur_mrate);
 	}
 	@pop = @next;
 }
@@ -246,3 +280,18 @@ print "matched $matched/".scalar(@EXTENDED)." values";
 print " -- GENERALIZED!" if $matched > $TRAIN_LEN;
 print " -- PERFECT ALGORITHM!" if $matched == scalar @EXTENDED;
 print "\n";
+
+# fitness summary
+print "\n--- run summary ---\n";
+printf "peak fitness %.2f at generation %d\n", $best_f, $peak_gen;
+printf "improvement:  %.2f -> %.2f (+%.2f)\n", $first_fit, $best_f, $best_f - $first_fit;
+printf "stagnation kicks: %d\n", $stag_kicks if $stag_kicks > 0;
+print "\n";
+
+# save best program as .tot file
+if($SAVE){
+	open my $fh, '>', $SAVE or die "can't write $SAVE: $!\n";
+	for(@ins){ print $fh "$_->[0] $_->[1]\n" }
+	close $fh;
+	print "saved to $SAVE\n";
+}

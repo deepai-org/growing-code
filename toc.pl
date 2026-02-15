@@ -20,9 +20,10 @@ for(@file){
 	push(@op, (split(/\s/,$_))[0]);
 	push(@opand, (split(/\s/,$_))[1]);
 	}
+# acc starts at variable 0 in the interpreter, so always declare it
+push(@varn, 0);
 for($i=0;$i<=$#op;$i++){
-	@varn;
-	if(grep($op[$i]eq$_, @varops)){	
+	if(grep($op[$i]eq$_, @varops)){
 		push(@varn, $opand[$i]) unless grep($_ == $opand[$i],@varn);
 		}
 	}
@@ -35,7 +36,7 @@ print $pre;
 for($i=0;$i<=$#varn;$i++){
 	print "int VAR_$vari{$varn[$i]}=0;\n";
 	}
-print "int* acc=&VAR_0;\n";
+print "int* acc=&VAR_$vari{0};\n";
 
 for($i=0;$i<=$#op;$i++) {
 	#print "LINE_$i: $op[$i] $vari{$opand[$i]}\n";
@@ -58,13 +59,14 @@ for($i=0;$i<=$#op;$i++) {
 	if($op eq "print") {print 'printf("%d\n"'.",VAR_$vari{$opand});"; goto EOL}
 	if($op eq "if" or $op eq "ifnot") {
 		my $dline=$i+2;
-		if($dline>$#op){print ";"; goto EOL;}
+		if($dline>$#op){print "return 0;"; goto EOL;}
 		print "if(VAR_$vari{$opand}".
 					($op eq "if"?'==':'!=')
 					."0) goto LINE_$dline;";
 		goto EOL;
 		}
 	if($op eq "up" or $op eq "down") {
+		if($opand == 0){print ";"; goto EOL;}
 		my $seeking=$i;
 		#print "\$seeking is $seeking\n";
 		#print "\$opand is $opand\n";

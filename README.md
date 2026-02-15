@@ -61,6 +61,22 @@ up 1
 
 Same output. No stopping condition — counting to infinity is easier than knowing when you're done.
 
+### Example: even numbers
+
+Evolution found this. Seven instructions, but only the loop body matters:
+
+```
+setc 1
+mark 7
+inc 0
+print 0
+inc 0
+up 1
+mod 0
+```
+
+Increment twice, print, repeat. The `setc` and `mod` are vestigial — evolution doesn't clean up after itself.
+
 ## The Pipeline
 
 ```
@@ -76,7 +92,14 @@ Any sequence of bytes is a valid program. Most do nothing useful. Some loop fore
 
 ## Usage
 
-Compile and run a toten program:
+Run a toten program directly (no compiler needed):
+
+```sh
+perl run.pl examples/count.tot
+perl run.pl examples/evolved-evens.tot 10000 20   # custom step limit and output limit
+```
+
+Or compile to C for maximum speed:
 
 ```sh
 cat examples/count.tot | perl toc.pl | gcc -x c - -o count && ./count
@@ -105,18 +128,30 @@ perl evolve.pl fib 3000     # evolve toward 1,1,2,3,5,8,13,21
 perl evolve.pl evens         # evolve toward 2,4,6,8,10
 ```
 
+Save the best evolved program and reproduce a run:
+
+```sh
+perl evolve.pl evens 500 --save evolved.tot   # export best as .tot file
+perl evolve.pl count 100 --seed 42            # reproducible run
+perl evolve.pl fib 2000 --seed 7 --save fib.tot  # both
+```
+
+The saved `.tot` file works with both `run.pl` and the C pipeline — the full round trip.
+
 Available targets: `count`, `squares`, `fib`, `primes`, `evens`, `odds`, `powers`, or any number N for 1..N.
 
 Programs are scored by how closely their output matches the target. But matching the training set isn't enough — programs are also tested on values *beyond* the target to reward generalization over memorization. A program that hardcodes `[1,4,9]` plateaus; one that actually computes `n*n` keeps scoring. Shorter programs are slightly preferred, so evolution compresses bloated solutions down to their essence.
 
 Genomes start at 24 bytes and can grow up to 80 through insertion mutations — the code literally grows.
 
+When fitness stagnates for 50 generations, the mutation rate triples temporarily to escape local optima, then resets when improvement resumes.
+
 ### Results
 
 | Target | Best output | Matched | Notes |
 |--------|-------------|---------|-------|
 | count `[1..10]` | `[1,2,3,...,40]` | 20/20 | **Perfect algorithm** in 4 instructions, gen 7 |
-| evens `[2,4,6,8,10]` | `[2,4,6,8,10]` | 5/5 | **Perfect**, gen 59 |
+| evens `[2,4,6,8,10]` | `[2,4,6,...,70]` | 15/15 | **Perfect algorithm** in 7 instructions, gen 129 |
 | fibonacci `[1,1,2,3,5,8,13,21]` | `[1,1,2,3,5,7,13,17,34]` | 7/18 | Hits fib numbers but can't sustain the recurrence |
 | squares `[1,4,9,16,25,36]` | `[1,4,9,16,16,32,...]` | 6/16 | Finds doubling, not squaring — `n*n` needs nested computation |
 
@@ -126,6 +161,7 @@ Genomes start at 24 bytes and can grow up to 80 through insertion mutations — 
 |------|-------------|
 | `examples/count.tot` | Hand-written: counts 1-10, halts (11 instructions) |
 | `examples/evolved-count.tot` | Evolved: counts forever (4 instructions) |
+| `examples/evolved-evens.tot` | Evolved: even numbers forever (7 instructions) |
 | `toten.h` | Original 2009 scratch file (program + notes) |
 | `toten.c` | Compiled C output from 2009 |
 | `toten_bkp.c` | Backup of an earlier compilation |
@@ -133,6 +169,7 @@ Genomes start at 24 bytes and can grow up to 80 through insertion mutations — 
 | `toc.pl` | Toten-to-C compiler |
 | `nums.pl` | Random bytes to toten program converter |
 | `random.pl` | Random byte generator |
+| `run.pl` | Standalone toten interpreter — runs `.tot` files directly, no compiler needed |
 | `rands.txt` | Sample output from running the count-to-10 program |
 | `evolve.pl` | Genetic algorithm — evolves toten programs toward a target output |
 
