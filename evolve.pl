@@ -1,20 +1,46 @@
 #!/usr/bin/perl
 # evolve.pl - the missing piece: evolve toten programs
-# usage: perl evolve.pl [generations] [target_max]
-#   default: 500 generations, target 1..10
+#
+# usage: perl evolve.pl [target] [generations]
+#   targets: count (1..10), five (1..5), squares, fib, primes, evens
+#   or just a number N for 1..N
+#   default: count 1000
 
 use strict;
 use warnings;
 
-my $GENS = $ARGV[0] || 500;
-my $TMAX = $ARGV[1] || 10;
-my @TARGET = (1..$TMAX);
+# --- targets ---
+my %TARGETS = (
+	count  => [1..10],
+	five   => [1..5],
+	three  => [1..3],
+	squares=> [map {$_*$_} 1..6],
+	fib    => [1,1,2,3,5,8,13,21],
+	primes => [2,3,5,7,11,13],
+	evens  => [2,4,6,8,10],
+	odds   => [1,3,5,7,9],
+	powers => [1,2,4,8,16,32],
+);
 
-my $POP = 100;
-my $GLEN = 24;       # 12 instructions
-my $MRATE = 0.08;
+my $targ = $ARGV[0] || 'count';
+my $GENS = $ARGV[1] || 1000;
+
+my @TARGET;
+if($TARGETS{$targ}){
+	@TARGET = @{$TARGETS{$targ}};
+} elsif($targ =~ /^\d+$/){
+	@TARGET = (1..$targ);
+} else {
+	die "unknown target '$targ'\ntargets: ".join(", ",sort keys %TARGETS).", or a number N\n";
+}
+
+my $POP = 150;
+my $MRATE = 0.06;
+my $GROW = 0.03;     # chance to insert/delete a byte pair
 my $ELITE = 5;
-my $TSTEPS = 10000;  # max interpreter steps
+my $TSTEPS = 10000;
+my $INIT_GLEN = 24;  # starting genome size
+my $MAX_GLEN = 80;   # max genome size (40 instructions)
 
 my @OPS = qw(if ifnot up down print add sub mul inc dec mod zero setv setc mark stop);
 
@@ -89,19 +115,34 @@ sub fitness {
 }
 
 # --- GA ops ---
-sub rg { [map { int rand 256 } 1..$GLEN] }
+sub rg { [map { int rand 256 } 1..$INIT_GLEN] }
 
 sub mutate {
 	my @g = @{$_[0]};
+	# point mutations
 	for(@g){ $_ = int rand 256 if rand() < $MRATE }
+	# grow: insert a random instruction
+	if(rand() < $GROW && @g < $MAX_GLEN){
+		my $pos = 2 * int(rand(@g/2 + 1));
+		splice @g, $pos, 0, int(rand(256)), int(rand(256));
+	}
+	# shrink: delete a random instruction
+	if(rand() < $GROW && @g > 4){
+		my $pos = 2 * int(rand(@g/2));
+		splice @g, $pos, 2;
+	}
 	return \@g;
 }
 
 sub cross {
 	my ($a,$b) = @_;
-	my $p = 2*int(rand($GLEN/2));
-	$p = 2 if $p == 0;
-	return [map { $_ < $p ? $a->[$_] : $b->[$_] } 0..$GLEN-1];
+	# pick a cut point in each parent (at instruction boundaries)
+	my $pa = 2*int(rand(@$a/2)); $pa = 2 if $pa == 0;
+	my $pb = 2*int(rand(@$b/2)); $pb = 2 if $pb == 0;
+	my @child = (@{$a}[0..$pa-1], @{$b}[$pb..$#$b]);
+	# cap length
+	splice @child, $MAX_GLEN if @child > $MAX_GLEN;
+	return \@child;
 }
 
 sub tourney {
@@ -116,8 +157,10 @@ my @pop = map { rg() } 1..$POP;
 my $best_f = -1;
 my $best_g;
 
-print "target: [@{[join ', ',@TARGET]}]\n";
-print "pop=$POP genome=${GLEN}b gens=$GENS\n\n";
+my $target_str = join(', ',@TARGET);
+my $max_fit = @TARGET * 10 + 1;
+print "target: [$target_str]\n";
+print "pop=$POP gens=$GENS (genomes can grow up to $MAX_GLEN bytes)\n\n";
 
 for my $gen (1..$GENS){
 	my @fit;
@@ -136,15 +179,17 @@ for my $gen (1..$GENS){
 		my @ins = decode($best_g);
 		my @out = run(@ins);
 		my $os = @out ? join(",",@out) : "-";
-		printf "gen %4d  fit=%6.2f  out=[%s]\n", $gen, $best_f, $os;
+		my $nb = scalar @{$best_g};
+		printf "gen %4d  fit=%6.2f  len=%2db  out=[%s]\n", $gen, $best_f, $nb, $os;
 	}
 	elsif($gen % 100 == 0){
 		my $avg = 0; $avg += $_ for @fit; $avg /= @fit;
-		printf "gen %4d  best=%6.2f  avg=%5.2f\n", $gen, $best_f, $avg;
+		my $avg_len = 0; $avg_len += scalar @$_ for @pop; $avg_len /= @pop;
+		printf "gen %4d  best=%6.2f  avg=%5.2f  avg_len=%.0fb\n", $gen, $best_f, $avg, $avg_len;
 	}
 
 	# perfect?
-	last if $best_f >= @TARGET * 10;
+	last if $best_f >= $max_fit;
 
 	# next gen
 	my @si = sort { $fit[$b] <=> $fit[$a] } 0..$#pop;
@@ -162,7 +207,7 @@ for my $gen (1..$GENS){
 print "\n" . "="x50 . "\n";
 my @ins = decode($best_g);
 my @out = run(@ins);
-print "best program (fitness $best_f):\n\n";
+print "best program (fitness $best_f, ".scalar(@{$best_g})." bytes, ".scalar(@ins)." instructions):\n\n";
 for(@ins){ print "  $_->[0] $_->[1]\n" }
 print "\noutput: [" . join(", ",@out) . "]\n";
 print "target: [" . join(", ",@TARGET) . "]\n";
