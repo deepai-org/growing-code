@@ -85,14 +85,16 @@ perl random.pl 24 | perl nums.pl | perl toc.pl | gcc -x c - -o random_prog && pe
 | `nums.pl` | Random bytes to toten program converter |
 | `random.pl` | Random byte generator |
 | `rands.txt` | Sample output from running the count-to-10 program |
+| `evolve.pl` | Genetic algorithm — evolves toten programs toward a target output |
 
-## What Was Never Built
+## Evolution
 
-The "growing" part. The missing evolutionary loop:
+The "growing" part. `evolve.pl` evolves random toten programs using a genetic algorithm:
 
-- Fitness function — evaluate program output against a goal
-- Selection — keep the best programs
-- Mutation / crossover — breed new programs from survivors
-- Automation — tie the generate-compile-run-evaluate cycle together
+```sh
+perl evolve.pl              # default: 500 generations, target 1..10
+perl evolve.pl 1000         # 1000 generations
+perl evolve.pl 1000 5       # target 1..5
+```
 
-The language was deliberately designed so that random byte sequences produce valid programs. The next step would have been to evolve them.
+It uses a built-in toten interpreter (no gcc needed), tournament selection, crossover, and mutation. Programs are scored by how closely their output matches the target sequence.
