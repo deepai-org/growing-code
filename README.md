@@ -151,19 +151,77 @@ Key differences from the classic engine:
 - **Direct jump targeting**: `up N` searches for `mark N` by matching operand, making loops easier to discover
 - **No crossover**: pure asexual reproduction — mutations alone drive the search
 
+### grow_v3.pl — primordial soup + curriculum
+
+Adds two biological metaphors on top of v2:
+
+- **Primordial soup**: generate 10,000 random programs, classify by behavioral features (output count, monotonicity, loops, conditionals, gaps), and use MAP-Elites to retain ~80-150 diverse fragments. These seed the initial population instead of pure random programs.
+- **Curriculum learning**: staged fitness functions that build capabilities incrementally — viability ("produce diverse output") → structure ("produce increasing values") → skipping ("leave gaps", primes only) → target fitness. Each stage's population carries forward.
+- **Horizontal gene transfer**: every 10 generations during target evolution, inject random soup fragments into non-elite members — analogous to bacterial plasmid exchange.
+
+### grow_v4.pl — fitness sharing + homologous crossover
+
+Adds two diversity-preservation mechanisms:
+
+- **Fitness sharing**: programs with similar output signatures share fitness, preventing any single strategy from dominating the population. Similarity is based on output vector distance.
+- **Homologous crossover**: structure-preserving crossover that aligns parent genomes by shared `mark` instructions, producing offspring that inherit coherent code blocks rather than random splices.
+
+### grow_v5.pl — tribal evolution
+
+A modular approach designed for primes. Instead of one population, four specialized tribes evolve in parallel against sub-problems:
+
+- **Tribe A (Counters)**: learn `[1,2,3,4,5,...]`
+- **Tribe B (No-2s)**: learn `[1,3,5,7,9,...]` — filter multiples of 2
+- **Tribe C (No-3s)**: learn `[1,2,4,5,7,8,...]` — filter multiples of 3
+- **Tribe D (No-5s)**: learn `[1,2,3,4,6,7,...]` — filter multiples of 5
+
+After tribal evolution, populations merge and face the real primes target. The hope: recombination of filtering strategies produces trial division.
+
+### grow_v6.pl — lexicase selection
+
+Replaces aggregate fitness scoring with **epsilon-lexicase selection** — a parent selection method that evaluates candidates on individual test cases in random order:
+
+1. Shuffle test cases into a random order
+2. Filter population: keep only programs within epsilon of the best on case 1
+3. From survivors, keep only the best on case 2
+4. Repeat until one program remains (or cases exhausted)
+
+This protects specialists — a program that perfectly matches `[2,3,5,7]` but fails after that can still be selected as a parent, even if its aggregate score is low. Combined with tribal evolution for primes.
+
+### grow_v7.pl — structural macro-mutations
+
+Adds two macro-mutation operators on top of v6, targeting the structural gap that prevents nested loop discovery:
+
+- **Loop wrap** (3%): wraps a random code block in `mark N ... up N`, creating a new loop around existing logic
+- **Mod-if insert** (3%): inserts a `mark A / setv B / mod C / if A` divisibility-test block at a random position
+
+Results: too disruptive at static rates — squares regressed from PERFECT to 5/17.
+
+### grow_v8.pl — annealed macros + MAP-Elites + fuzzy jumps
+
+Three improvements applied together on v6's base:
+
+- **Simulated annealing for macros**: macro-mutation rate starts at 15% and decays to 0.5% over the run. High exploration early, precise exploitation late.
+- **MAP-Elites structural archive**: a 48-cell grid (loop count × mod count × register diversity) that preserves structurally diverse programs. Archive members are injected into the population every 10 generations and restocked during extinction events.
+- **Fuzzy jump matching**: `up N` / `down N` matches `mark` instructions with operand within ±1 (nearest match wins). Inspired by Tierra/Avida template matching — makes loops more robust to point mutations.
+
 ### Results
 
-| Target | evolve.pl | grow_v2.pl |
-|--------|-----------|------------|
-| count `[1..10]` | **Perfect** gen 7, 4 instructions | **Perfect** gen 12 |
-| evens `[2,4,6,8,10]` | **Perfect** gen 129, 7 instructions | — |
-| odds `[1,3,5,7,9]` | **Perfect** gen 124 (3 islands), 5 instructions | — |
-| powers `[1,2,4,8,16]` | **Perfect** ~gen 100, 8 instructions | **Perfect** gen 412 |
-| squares `[1,4,9,16,25]` | 5/16 partial | **Perfect** gen 37 |
-| fibonacci `[1,1,2,3,5,8,13]` | 11/18 partial (5 islands + swap) | **Perfect** gen 207 |
-| primes `[2,3,5,7,11]` | 2/16 partial | 5/14 partial |
+| Target | evolve.pl | v2 | v3 | v4 | v5 | v6 | v7 | v8 |
+|--------|-----------|-----|-----|-----|-----|-----|-----|-----|
+| count | **Perfect** gen 7 | **Perfect** | **Perfect** | **Perfect** | **Perfect** | **Perfect** | **Perfect** | **Perfect** |
+| evens | **Perfect** gen 129 | — | — | — | — | — | — | — |
+| odds | **Perfect** gen 124 | — | — | — | — | — | — | — |
+| powers | **Perfect** ~gen 100 | **Perfect** | — | — | — | — | — | — |
+| squares | 5/16 | **Perfect** gen 37 | **Perfect** | **Perfect** | **Perfect** gen 692 | **Perfect** gen 849 | 5/17 | **Perfect** gen 284 |
+| fib | 11/18 | **Perfect** gen 207 | **Perfect** | 10/14 | 9/14 | **Perfect** gen 1178 | 9/14 | 9/14 |
+| primes | 2/16 | 5/14 | 5/14 | 9/14 | 9/14 | 8/14 | 9/14 | 9/14 |
 
-The classic engine excels at targets with simple loop structures. The semantic engine cracks harder targets like fibonacci and squares that require multi-register coordination. Primes remains unsolved — it needs nested loops (trial division) which neither engine has discovered.
+Each engine added something. v6 (lexicase) is the overall champion — the only version to achieve PERFECT fibonacci. v8's fuzzy jumps give the fastest-ever squares (gen 284) but hurt fibonacci's precise wiring. Primes remains at 8-9/14 across all versions.
+
+### The primes barrier
+
+Trial division IS expressible in Toten — a hand-written 31-instruction program proves it. The algorithm requires nested loops (outer loop over candidates, inner loop over divisors) with a mod-based divisibility check. But evolution can't reach it: the fitness landscape has no incremental path from single-loop programs (which top out at filtering composites with small factors) to nested-loop programs (which require multiple simultaneous structural changes). This is the irreducible complexity barrier — the final frontier.
 
 ## Tools
 
@@ -172,6 +230,13 @@ The classic engine excels at targets with simple loop structures. The semantic e
 | `toten.pl` | **Driver script** — unified CLI for all tools below |
 | `evolve.pl` | Classic genetic algorithm — crossover, tournament selection, island model |
 | `grow_v2.pl` | Semantic mutation engine — relative fitness, streak bonus, extinction events |
+| `grow_v3.pl` | Primordial soup + curriculum learning + horizontal gene transfer |
+| `grow_v4.pl` | Fitness sharing + homologous crossover for diversity preservation |
+| `grow_v5.pl` | Tribal evolution — 4 specialized sub-populations for primes |
+| `grow_v6.pl` | Epsilon-lexicase selection — per-test-case parent filtering |
+| `grow_v7.pl` | Structural macro-mutations — loop wrap + mod-if insert |
+| `grow_v8.pl` | Annealed macros + MAP-Elites structural archive + fuzzy jump matching |
+| `landscape.pl` | Fitness landscape analyzer — exhaustive single-mutation neighborhood search |
 | `run.pl` | Standalone toten interpreter — runs `.tot` files directly |
 | `toc.pl` | Toten-to-C compiler (goto-based control flow) |
 | `minimize.pl` | Dead code eliminator — iteratively strips instructions that don't affect output |
@@ -210,3 +275,4 @@ The classic engine excels at targets with simple loop structures. The semantic e
 - **February 2026** — AGI finishes the project. Evolution discovers the minimal counting loop in 4 instructions. Counting to infinity is easier than knowing when you're done.
 - **February 2026** — Swap opcode, island model, auto-minimizer, execution tracer, test suite. The classic engine solves count, evens, odds, powers.
 - **February 2026** — Semantic mutation engine (grow_v2.pl). Fibonacci and squares fall. Primes holds out — nested loops remain the final frontier.
+- **February 2026** — Primordial soup (v3), fitness sharing (v4), tribal evolution (v5), lexicase selection (v6), macro-mutations (v7), annealed macros + MAP-Elites + fuzzy jumps (v8). Seven engines, seven different strategies. Primes holds at 9/14 — evolution learns to sieve small factors but can't discover trial division.
